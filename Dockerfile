@@ -16,18 +16,17 @@ FROM alpine:latest
 
 WORKDIR /app
 
+# Install CA certificates for HTTPS requests
+RUN apk --no-cache add ca-certificates tzdata
+
 # Copy binary from builder stage
 COPY --from=builder /app/geoip-api .
 
 # Create directory for databases
-RUN mkdir -p /app/db
-
-# Environment variables
-ENV GEOIP_DB_DIR=/app/db
-ENV PORT=8080
+RUN mkdir -p /app/maxmind_db
 
 # Expose port
-EXPOSE 8080
+EXPOSE 5324
 
 # Ensure the binary is executable
 RUN chmod +x /app/geoip-api

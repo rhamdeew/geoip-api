@@ -1,0 +1,31 @@
+[Unit]
+Description=GeoIP API Service
+After=network.target
+
+[Service]
+Type=simple
+User=geoip
+Group=geoip
+WorkingDirectory=/opt/geoip-api
+ExecStart=/opt/geoip-api/geoip-api
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=geoip-api
+
+# Hardening
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,2 +1,3 @@
 *.mmdb
+maxmind_db
 geoip-api
