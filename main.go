@@ -3,11 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oschwald/geoip2-golang"
@@ -36,11 +39,35 @@ type IPInfo struct {
 	Org               string  `json:"org"`
 }
 
-// Database readers
+// Database configuration
+type dbConfig struct {
+	reader     *geoip2.Reader
+	url        string
+	localPath  string
+	lastUpdate time.Time
+	mutex      sync.RWMutex
+}
+
+// Database readers and configuration
 var (
-	dbASN     *geoip2.Reader
-	dbCity    *geoip2.Reader
-	dbCountry *geoip2.Reader
+	// Fixed path for MaxMind databases
+	dbDir = "./maxmind_db"
+	
+	// Database configurations
+	databases = map[string]*dbConfig{
+		"asn": {
+			url:       "https://git.io/GeoLite2-ASN.mmdb",
+			localPath: filepath.Join(dbDir, "GeoLite2-ASN.mmdb"),
+		},
+		"city": {
+			url:       "https://git.io/GeoLite2-City.mmdb",
+			localPath: filepath.Join(dbDir, "GeoLite2-City.mmdb"),
+		},
+		"country": {
+			url:       "https://git.io/GeoLite2-Country.mmdb",
+			localPath: filepath.Join(dbDir, "GeoLite2-Country.mmdb"),
+		},
+	}
 	
 	// ISO3 country codes mapping
 	iso3Codes = map[string]string{
@@ -84,32 +111,19 @@ var (
 )
 
 func main() {
-	var err error
+	// Ensure database directory exists
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		log.Fatalf("Failed to create database directory: %v", err)
+	}
 	
-	// Fixed path for MaxMind databases
-	dbDir := "./maxmind_db"
+	// Initialize or update databases
+	if err := initDatabases(); err != nil {
+		log.Fatalf("Error initializing databases: %v", err)
+	}
 	
-	// Open ASN database
-	dbASN, err = geoip2.Open(filepath.Join(dbDir, "GeoLite2-ASN.mmdb"))
-	if err != nil {
-		log.Fatalf("Error opening ASN database: %v", err)
-	}
-	defer dbASN.Close()
-
-	// Open City database
-	dbCity, err = geoip2.Open(filepath.Join(dbDir, "GeoLite2-City.mmdb"))
-	if err != nil {
-		log.Fatalf("Error opening City database: %v", err)
-	}
-	defer dbCity.Close()
-
-	// Open Country database
-	dbCountry, err = geoip2.Open(filepath.Join(dbDir, "GeoLite2-Country.mmdb"))
-	if err != nil {
-		log.Fatalf("Error opening Country database: %v", err)
-	}
-	defer dbCountry.Close()
-
+	// Start a goroutine to periodically update databases
+	go startDatabaseUpdater()
+	
 	// Configure server
 	port := "5324"
 
@@ -119,6 +133,130 @@ func main() {
 	// Start the server
 	log.Printf("Starting server on port %s...\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+// Initialize databases - download if needed and open readers
+func initDatabases() error {
+	for name, db := range databases {
+		// Check if database file exists
+		if _, err := os.Stat(db.localPath); os.IsNotExist(err) {
+			// Database file doesn't exist, download it
+			log.Printf("Database %s not found, downloading...", name)
+			if err := downloadDatabase(db.url, db.localPath); err != nil {
+				return fmt.Errorf("failed to download %s database: %v", name, err)
+			}
+			db.lastUpdate = time.Now()
+		}
+		
+		// Open the database reader
+		reader, err := geoip2.Open(db.localPath)
+		if err != nil {
+			return fmt.Errorf("error opening %s database: %v", name, err)
+		}
+		
+		log.Printf("Successfully opened %s database", name)
+		db.reader = reader
+		
+		// If we don't know when it was last updated, set to file's modification time
+		if db.lastUpdate.IsZero() {
+			if info, err := os.Stat(db.localPath); err == nil {
+				db.lastUpdate = info.ModTime()
+			} else {
+				// If we can't get mod time, just use now
+				db.lastUpdate = time.Now()
+			}
+		}
+	}
+	
+	return nil
+}
+
+// Start a goroutine that periodically updates the databases
+func startDatabaseUpdater() {
+	ticker := time.NewTicker(24 * time.Hour) // Check daily
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ticker.C:
+			updateDatabasesIfNeeded()
+		}
+	}
+}
+
+// Check if databases need updating and update them if needed
+func updateDatabasesIfNeeded() {
+	for name, db := range databases {
+		// Check if database is older than one month
+		if time.Since(db.lastUpdate) >= 30*24*time.Hour {
+			log.Printf("Database %s is older than 30 days, updating...", name)
+			
+			// Download to a temporary file
+			tempPath := db.localPath + ".new"
+			if err := downloadDatabase(db.url, tempPath); err != nil {
+				log.Printf("Failed to download updated %s database: %v", name, err)
+				continue
+			}
+			
+			// Close the existing reader before replacing the file
+			db.mutex.Lock()
+			if db.reader != nil {
+				db.reader.Close()
+			}
+			
+			// Replace the old file with the new one
+			if err := os.Rename(tempPath, db.localPath); err != nil {
+				log.Printf("Failed to replace %s database file: %v", name, err)
+				// Try to reopen the old file
+				if reader, err := geoip2.Open(db.localPath); err == nil {
+					db.reader = reader
+				}
+				db.mutex.Unlock()
+				continue
+			}
+			
+			// Open the new database
+			reader, err := geoip2.Open(db.localPath)
+			if err != nil {
+				log.Printf("Failed to open updated %s database: %v", name, err)
+				db.mutex.Unlock()
+				continue
+			}
+			
+			// Update the reader and last update time
+			db.reader = reader
+			db.lastUpdate = time.Now()
+			db.mutex.Unlock()
+			
+			log.Printf("Successfully updated %s database", name)
+		}
+	}
+}
+
+// Download a file from the specified URL to the local path
+func downloadDatabase(url string, localPath string) error {
+	// Create a temporary file
+	out, err := os.Create(localPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	
+	// Send HTTP GET request
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	
+	// Check server response
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status: %s", resp.Status)
+	}
+	
+	// Copy the file content
+	_, err = io.Copy(out, resp.Body)
+	return err
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +328,9 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 	}
 	
 	// Get ASN information
-	asn, err := dbASN.ASN(ip)
+	databases["asn"].mutex.RLock()
+	asn, err := databases["asn"].reader.ASN(ip)
+	databases["asn"].mutex.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("ASN lookup error: %v", err)
 	}
@@ -199,7 +339,9 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 	info.Org = asn.AutonomousSystemOrganization
 	
 	// Get city information
-	city, err := dbCity.City(ip)
+	databases["city"].mutex.RLock()
+	city, err := databases["city"].reader.City(ip)
+	databases["city"].mutex.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("city lookup error: %v", err)
 	}
@@ -215,7 +357,9 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 	info.Timezone = city.Location.TimeZone
 	
 	// Get country information
-	country, err := dbCountry.Country(ip)
+	databases["country"].mutex.RLock()
+	country, err := databases["country"].reader.Country(ip)
+	databases["country"].mutex.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("country lookup error: %v", err)
 	}

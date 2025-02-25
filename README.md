@@ -1,123 +1,146 @@
-# GeoIP API
+# GeoIP API Installation and Deployment Guide
 
-A simple Go HTTP server that provides geolocation information for IP addresses using MaxMind GeoLite2 databases.
+This guide explains how to install and deploy the GeoIP API service using systemd.
 
-## Features
+## Building the Application
 
-- Lookup IP geolocation data using MaxMind GeoLite2 databases
-- API endpoint similar to ipapi.co format
-- JSON output with detailed location information
-- Container-ready with Docker support
+1. Ensure you have Go 1.18 or later installed:
 
-## Prerequisites
+```bash
+go version
+```
 
-- Go 1.18 or higher
-- MaxMind GeoLite2 database files:
-  - GeoLite2-ASN.mmdb
-  - GeoLite2-City.mmdb
-  - GeoLite2-Country.mmdb
+2. Clone the repository:
+
+```bash
+git clone https://github.com/rhamdeew/geoip-api.git
+cd geoip-api
+```
+
+3. Build the application:
+
+```bash
+go mod tidy
+go build -o geoip-api
+```
+
+## Creating a Service User
+
+Create a dedicated user for running the service:
+
+```bash
+sudo useradd -r -s /bin/false geoip
+```
 
 ## Installation
 
-1. Clone this repository
-2. Place your MaxMind GeoLite2 database files in the root directory or specify a custom path with the `GEOIP_DB_DIR` environment variable
-3. Install dependencies:
+1. Create the installation directory:
 
 ```bash
-go mod download
+sudo mkdir -p /opt/geoip-api
+sudo mkdir -p /opt/geoip-api/maxmind_db
 ```
 
-4. Build the binary:
+2. Copy the binary and set permissions:
 
 ```bash
-go build -o geoip-api
+sudo cp geoip-api /opt/geoip-api/
+sudo chown -R geoip:geoip /opt/geoip-api
+sudo chmod 755 /opt/geoip-api/geoip-api
+```
+
+3. Copy the systemd service file:
+
+```bash
+sudo cp geoip-api.service /etc/systemd/system/
+```
+
+## Starting the Service
+
+1. Reload systemd to recognize the new service:
+
+```bash
+sudo systemctl daemon-reload
+```
+
+2. Enable the service to start at boot:
+
+```bash
+sudo systemctl enable geoip-api
+```
+
+3. Start the service:
+
+```bash
+sudo systemctl start geoip-api
+```
+
+4. Check the service status:
+
+```bash
+sudo systemctl status geoip-api
 ```
 
 ## Usage
 
-### Running the server
+The GeoIP API service will:
+
+1. Automatically download MaxMind databases if they're not present
+2. Update databases monthly
+3. Listen on port 5324 for API requests
+
+Available endpoints:
+
+- `/ipgeo` - Get geolocation information for the client's IP address
+- `/ipgeo/{ip}` - Get geolocation information for a specific IP address
+
+Example:
+
+```
+curl http://localhost:5324/ipgeo/8.8.8.8
+```
+
+## Logs
+
+View service logs:
 
 ```bash
-./geoip-api
+sudo journalctl -u geoip-api
 ```
 
-The server will start on port 8080 by default. You can change the port by setting the `PORT` environment variable.
+## Firewall Configuration
 
-### API Endpoints
+If you have a firewall enabled, allow traffic to port 5324:
 
-- `/{ip}/json/` - Get geolocation information for a specific IP address
-- `/json/` - Get geolocation information for the client's IP address
-
-### Sample Request
-
-```
-http://localhost:8080/213.25.10.45/json/
-```
-
-### Sample Response
-
-```json
-{
-  "ip": "213.25.10.45",
-  "network": "213.25.0.0/19",
-  "version": "IPv4",
-  "city": "Barłożno",
-  "region": "Pomerania",
-  "region_code": "22",
-  "country": "PL",
-  "country_name": "Poland",
-  "country_code": "PL",
-  "country_code_iso3": "POL",
-  "country_capital": "Warsaw",
-  "country_tld": ".pl",
-  "continent_code": "EU",
-  "in_eu": true,
-  "postal": "83-225",
-  "latitude": 53.7835,
-  "longitude": 18.6124,
-  "timezone": "Europe/Warsaw",
-  "utc_offset": "+0100",
-  "country_calling_code": "+48",
-  "currency": "PLN",
-  "currency_name": "Zloty",
-  "languages": "pl",
-  "country_area": 312685,
-  "country_population": 37978548,
-  "asn": "AS5617",
-  "org": "Orange Polska Spolka Akcyjna"
-}
-```
-
-## Docker Support
-
-You can build and run the application using Docker:
-
-1. Build the Docker image:
+### For UFW:
 
 ```bash
-docker build -t geoip-api .
+sudo ufw allow 5324/tcp
 ```
 
-2. Run the container:
+### For firewalld:
 
 ```bash
-docker run -p 8080:8080 -v /path/to/your/mmdb/files:/app/db geoip-api
+sudo firewall-cmd --permanent --add-port=5324/tcp
+sudo firewall-cmd --reload
 ```
 
-## Environment Variables
+## Troubleshooting
 
-- `PORT`: The port on which the server listens (default: 8080)
-- `GEOIP_DB_DIR`: The directory containing the MaxMind database files (default: current directory)
+- If the service fails to start, check the logs:
 
-## Notes
+```bash
+sudo journalctl -u geoip-api -n 50 --no-pager
+```
 
-- This application comes with a minimal set of country metadata. For production use, you might want to expand this with a more comprehensive dataset.
-- The MaxMind GeoLite2 databases are not included with this repository. You need to download them separately from MaxMind's website.
+- Verify database files exist in the correct location:
 
-## License
+```bash
+ls -la /opt/geoip-api/maxmind_db/
+```
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+- Check if the service is running and listening on the correct port:
 
-## Disclaimer
-
-This project uses GeoLite2 data created by MaxMind, available from [https://www.maxmind.com](https://www.maxmind.com).
+```bash
+sudo ss -tulpn | grep 5324
+```
