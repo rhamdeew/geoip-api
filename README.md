@@ -41,10 +41,11 @@ sudo mkdir -p /opt/geoip-api
 sudo mkdir -p /opt/geoip-api/maxmind_db
 ```
 
-2. Copy the binary and set permissions:
+2. Copy the binary, config file, and set permissions:
 
 ```bash
 sudo cp geoip-api /opt/geoip-api/
+sudo cp config.json /opt/geoip-api/
 sudo chown -R geoip:geoip /opt/geoip-api
 sudo chmod 755 /opt/geoip-api/geoip-api
 ```
@@ -81,13 +82,43 @@ sudo systemctl start geoip-api
 sudo systemctl status geoip-api
 ```
 
+## Configuration
+
+The service uses a JSON configuration file located at `/opt/geoip-api/config.json` with the following structure:
+
+```json
+{
+  "host": "api.example.com",  // Hostname to accept requests from (empty for all hosts)
+  "port": "5324"              // Port to listen on
+}
+```
+
+### Configuration Options
+
+- **host**: Hostname to accept connections from. If set, the API will only respond to requests with a matching `Host` header. Leave empty to accept all hosts.
+- **port**: Port number the API should listen on.
+
+You can also specify an alternative configuration file path using the `-config` flag:
+
+```bash
+sudo systemctl edit geoip-api
+```
+
+Add the following to change the config path:
+
+```
+[Service]
+ExecStart=
+ExecStart=/opt/geoip-api/geoip-api -config /path/to/your/config.json
+```
+
 ## Usage
 
 The GeoIP API service will:
 
 1. Automatically download MaxMind databases if they're not present
 2. Update databases monthly
-3. Listen on port 5324 for API requests
+3. Listen on the configured port and accept requests from the configured hostname
 
 Available endpoints:
 

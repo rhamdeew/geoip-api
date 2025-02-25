@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +16,12 @@ import (
 
 	"github.com/oschwald/geoip2-golang"
 )
+
+// Config represents the application configuration
+type Config struct {
+	Host string `json:"host"`
+	Port string `json:"port"`
+}
 
 // IPInfo represents the information about an IP address
 type IPInfo struct {
@@ -47,6 +54,12 @@ type dbConfig struct {
 	lastUpdate time.Time
 	mutex      sync.RWMutex
 }
+
+// Application configuration
+var (
+	config     Config
+	configPath string
+)
 
 // Database readers and configuration
 var (
@@ -110,7 +123,27 @@ var (
 	}
 )
 
+func init() {
+	// Define command line flags
+	flag.StringVar(&configPath, "config", "config.json", "Path to configuration file")
+}
+
 func main() {
+	// Parse command line flags
+	flag.Parse()
+	
+	// Load configuration
+	if err := loadConfig(configPath); err != nil {
+		log.Printf("Error loading configuration: %v", err)
+		log.Println("Using default configuration")
+		
+		// Set default configuration
+		config = Config{
+			Host: "",       // Empty host means accept all hosts
+			Port: "5324",   // Default port
+		}
+	}
+	
 	// Ensure database directory exists
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
 		log.Fatalf("Failed to create database directory: %v", err)
@@ -124,15 +157,37 @@ func main() {
 	// Start a goroutine to periodically update databases
 	go startDatabaseUpdater()
 	
-	// Configure server
-	port := "5324"
-
 	// Set up router with custom handler that checks all requests
 	http.HandleFunc("/", handleRequest)
 
 	// Start the server
-	log.Printf("Starting server on port %s...\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	addr := fmt.Sprintf("%s:%s", config.Host, config.Port)
+	log.Printf("Starting server on %s...\n", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+// Load configuration from file
+func loadConfig(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return err
+	}
+	
+	if err := json.Unmarshal(data, &config); err != nil {
+		return err
+	}
+	
+	log.Printf("Configuration loaded from %s", path)
+	log.Printf("  Host: %s", config.Host)
+	log.Printf("  Port: %s", config.Port)
+	
+	return nil
 }
 
 // Initialize databases - download if needed and open readers
@@ -261,6 +316,22 @@ func downloadDatabase(url string, localPath string) error {
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+	
+	// Check host if configured
+	if config.Host != "" {
+		// Parse the Host header to extract hostname without port
+		requestHost := r.Host
+		if hostWithoutPort, _, err := net.SplitHostPort(requestHost); err == nil {
+			// If we could split the host and port, use just the host part
+			requestHost = hostWithoutPort
+		}
+		
+		if requestHost != config.Host {
+			log.Printf("Request rejected due to incorrect host: %s (expected %s)", requestHost, config.Host)
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+	}
 	
 	// Log the request
 	log.Printf("Request received: %s %s from %s", r.Method, path, getClientIP(r))

@@ -22,6 +22,9 @@ RUN apk --no-cache add ca-certificates tzdata
 # Copy binary from builder stage
 COPY --from=builder /app/geoip-api .
 
+# Copy sample config file
+COPY config.json .
+
 # Create directory for databases
 RUN mkdir -p /app/maxmind_db
 
