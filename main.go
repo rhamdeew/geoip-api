@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -26,8 +25,6 @@ type IPInfo struct {
 	CountryName       string  `json:"country_name"`
 	CountryCode       string  `json:"country_code"`
 	CountryCodeISO3   string  `json:"country_code_iso3"`
-	CountryCapital    string  `json:"country_capital"`
-	CountryTLD        string  `json:"country_tld"`
 	ContinentCode     string  `json:"continent_code"`
 	InEU              bool    `json:"in_eu"`
 	Postal            string  `json:"postal"`
@@ -35,76 +32,62 @@ type IPInfo struct {
 	Longitude         float64 `json:"longitude"`
 	Timezone          string  `json:"timezone"`
 	UTCOffset         string  `json:"utc_offset"`
-	CountryCallingCode string  `json:"country_calling_code"`
-	Currency          string  `json:"currency"`
-	CurrencyName      string  `json:"currency_name"`
-	Languages         string  `json:"languages"`
-	CountryArea       uint64  `json:"country_area"`
-	CountryPopulation uint64  `json:"country_population"`
 	ASN               string  `json:"asn"`
 	Org               string  `json:"org"`
 }
 
-// Database paths
+// Database readers
 var (
 	dbASN     *geoip2.Reader
 	dbCity    *geoip2.Reader
 	dbCountry *geoip2.Reader
-
-	// Country metadata (this would ideally come from another source)
-	countryMetadata = map[string]struct {
-		Capital    string
-		TLD        string
-		CallingCode string
-		Currency   string
-		CurrencyName string
-		Languages  string
-		Area       uint64
-		Population uint64
-	}{
-		"PL": {
-			Capital:     "Warsaw",
-			TLD:         ".pl",
-			CallingCode: "+48",
-			Currency:    "PLN",
-			CurrencyName: "Zloty",
-			Languages:   "pl",
-			Area:        312685,
-			Population:  37978548,
-		},
-		// Add more countries as needed
-		"US": {
-			Capital:     "Washington D.C.",
-			TLD:         ".us",
-			CallingCode: "+1",
-			Currency:    "USD",
-			CurrencyName: "US Dollar",
-			Languages:   "en",
-			Area:        9372610,
-			Population:  331002651,
-		},
-		"GB": {
-			Capital:     "London",
-			TLD:         ".uk",
-			CallingCode: "+44",
-			Currency:    "GBP",
-			CurrencyName: "Pound Sterling",
-			Languages:   "en",
-			Area:        242900,
-			Population:  67886011,
-		},
-		// Add more as needed
+	
+	// ISO3 country codes mapping
+	iso3Codes = map[string]string{
+		"AD": "AND", "AE": "ARE", "AF": "AFG", "AG": "ATG", "AI": "AIA", "AL": "ALB", "AM": "ARM",
+		"AO": "AGO", "AQ": "ATA", "AR": "ARG", "AS": "ASM", "AT": "AUT", "AU": "AUS", "AW": "ABW",
+		"AX": "ALA", "AZ": "AZE", "BA": "BIH", "BB": "BRB", "BD": "BGD", "BE": "BEL", "BF": "BFA",
+		"BG": "BGR", "BH": "BHR", "BI": "BDI", "BJ": "BEN", "BL": "BLM", "BM": "BMU", "BN": "BRN",
+		"BO": "BOL", "BQ": "BES", "BR": "BRA", "BS": "BHS", "BT": "BTN", "BV": "BVT", "BW": "BWA",
+		"BY": "BLR", "BZ": "BLZ", "CA": "CAN", "CC": "CCK", "CD": "COD", "CF": "CAF", "CG": "COG",
+		"CH": "CHE", "CI": "CIV", "CK": "COK", "CL": "CHL", "CM": "CMR", "CN": "CHN", "CO": "COL",
+		"CR": "CRI", "CU": "CUB", "CV": "CPV", "CW": "CUW", "CX": "CXR", "CY": "CYP", "CZ": "CZE",
+		"DE": "DEU", "DJ": "DJI", "DK": "DNK", "DM": "DMA", "DO": "DOM", "DZ": "DZA", "EC": "ECU",
+		"EE": "EST", "EG": "EGY", "EH": "ESH", "ER": "ERI", "ES": "ESP", "ET": "ETH", "FI": "FIN",
+		"FJ": "FJI", "FK": "FLK", "FM": "FSM", "FO": "FRO", "FR": "FRA", "GA": "GAB", "GB": "GBR",
+		"GD": "GRD", "GE": "GEO", "GF": "GUF", "GG": "GGY", "GH": "GHA", "GI": "GIB", "GL": "GRL",
+		"GM": "GMB", "GN": "GIN", "GP": "GLP", "GQ": "GNQ", "GR": "GRC", "GS": "SGS", "GT": "GTM",
+		"GU": "GUM", "GW": "GNB", "GY": "GUY", "HK": "HKG", "HM": "HMD", "HN": "HND", "HR": "HRV",
+		"HT": "HTI", "HU": "HUN", "ID": "IDN", "IE": "IRL", "IL": "ISR", "IM": "IMN", "IN": "IND",
+		"IO": "IOT", "IQ": "IRQ", "IR": "IRN", "IS": "ISL", "IT": "ITA", "JE": "JEY", "JM": "JAM",
+		"JO": "JOR", "JP": "JPN", "KE": "KEN", "KG": "KGZ", "KH": "KHM", "KI": "KIR", "KM": "COM",
+		"KN": "KNA", "KP": "PRK", "KR": "KOR", "KW": "KWT", "KY": "CYM", "KZ": "KAZ", "LA": "LAO",
+		"LB": "LBN", "LC": "LCA", "LI": "LIE", "LK": "LKA", "LR": "LBR", "LS": "LSO", "LT": "LTU",
+		"LU": "LUX", "LV": "LVA", "LY": "LBY", "MA": "MAR", "MC": "MCO", "MD": "MDA", "ME": "MNE",
+		"MF": "MAF", "MG": "MDG", "MH": "MHL", "MK": "MKD", "ML": "MLI", "MM": "MMR", "MN": "MNG",
+		"MO": "MAC", "MP": "MNP", "MQ": "MTQ", "MR": "MRT", "MS": "MSR", "MT": "MLT", "MU": "MUS",
+		"MV": "MDV", "MW": "MWI", "MX": "MEX", "MY": "MYS", "MZ": "MOZ", "NA": "NAM", "NC": "NCL",
+		"NE": "NER", "NF": "NFK", "NG": "NGA", "NI": "NIC", "NL": "NLD", "NO": "NOR", "NP": "NPL",
+		"NR": "NRU", "NU": "NIU", "NZ": "NZL", "OM": "OMN", "PA": "PAN", "PE": "PER", "PF": "PYF",
+		"PG": "PNG", "PH": "PHL", "PK": "PAK", "PL": "POL", "PM": "SPM", "PN": "PCN", "PR": "PRI",
+		"PS": "PSE", "PT": "PRT", "PW": "PLW", "PY": "PRY", "QA": "QAT", "RE": "REU", "RO": "ROU",
+		"RS": "SRB", "RU": "RUS", "RW": "RWA", "SA": "SAU", "SB": "SLB", "SC": "SYC", "SD": "SDN",
+		"SE": "SWE", "SG": "SGP", "SH": "SHN", "SI": "SVN", "SJ": "SJM", "SK": "SVK", "SL": "SLE",
+		"SM": "SMR", "SN": "SEN", "SO": "SOM", "SR": "SUR", "SS": "SSD", "ST": "STP", "SV": "SLV",
+		"SX": "SXM", "SY": "SYR", "SZ": "SWZ", "TC": "TCA", "TD": "TCD", "TF": "ATF", "TG": "TGO",
+		"TH": "THA", "TJ": "TJK", "TK": "TKL", "TL": "TLS", "TM": "TKM", "TN": "TUN", "TO": "TON",
+		"TR": "TUR", "TT": "TTO", "TV": "TUV", "TW": "TWN", "TZ": "TZA", "UA": "UKR", "UG": "UGA",
+		"UM": "UMI", "US": "USA", "UY": "URY", "UZ": "UZB", "VA": "VAT", "VC": "VCT", "VE": "VEN",
+		"VG": "VGB", "VI": "VIR", "VN": "VNM", "VU": "VUT", "WF": "WLF", "WS": "WSM", "YE": "YEM",
+		"YT": "MYT", "ZA": "ZAF", "ZM": "ZMB", "ZW": "ZWE",
 	}
 )
 
 func main() {
 	var err error
 	
-	// Get database directory from environment or use default
-	dbDir := os.Getenv("GEOIP_DB_DIR")
-	if dbDir == "" {
-		dbDir = "."
-	}
+	// Fixed path for MaxMind databases
+	dbDir := "./maxmind_db"
 	
 	// Open ASN database
 	dbASN, err = geoip2.Open(filepath.Join(dbDir, "GeoLite2-ASN.mmdb"))
@@ -128,56 +111,43 @@ func main() {
 	defer dbCountry.Close()
 
 	// Configure server
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
+	port := "5324"
 
-	// Set up routes
-	http.HandleFunc("/", handleRoot)
-	http.HandleFunc("/json/", handleJSONRequest)
+	// Set up router with custom handler that checks all requests
+	http.HandleFunc("/", handleRequest)
 
 	// Start the server
 	log.Printf("Starting server on port %s...\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
-func handleRoot(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		ipAddress := strings.TrimPrefix(r.URL.Path, "/")
-		ipAddress = strings.TrimSuffix(ipAddress, "/json")
-		ipAddress = strings.TrimSuffix(ipAddress, "/")
-		
-		// Handle IP lookup
-		handleIPLookup(w, r, ipAddress)
-		return
-	}
+func handleRequest(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
 	
-	fmt.Fprint(w, "IP Geolocation API. Use /{ip}/json/ to get IP information.")
-}
-
-func handleJSONRequest(w http.ResponseWriter, r *http.Request) {
-	// Extract IP from the URL path
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) < 2 {
-		http.Error(w, "Invalid request format", http.StatusBadRequest)
-		return
-	}
+	// Log the request
+	log.Printf("Request received: %s %s from %s", r.Method, path, getClientIP(r))
 	
-	ipAddress := ""
-	for _, part := range parts {
-		if net.ParseIP(part) != nil {
-			ipAddress = part
-			break
+	// Check if path is one of our valid endpoints
+	if path == "/ipgeo" {
+		// Handle client IP lookup
+		clientIP := getClientIP(r)
+		log.Printf("Processing request for client IP: %s", clientIP)
+		handleIPLookup(w, r, clientIP)
+		return
+	} else if strings.HasPrefix(path, "/ipgeo/") {
+		// Extract IP from the path
+		parts := strings.Split(path, "/")
+		if len(parts) == 3 && parts[1] == "ipgeo" {
+			ipAddress := parts[2]
+			log.Printf("Processing request for specific IP: %s", ipAddress)
+			handleIPLookup(w, r, ipAddress)
+			return
 		}
 	}
 	
-	if ipAddress == "" {
-		// If no IP in path, use the requester's IP
-		ipAddress = getClientIP(r)
-	}
-	
-	handleIPLookup(w, r, ipAddress)
+	// All other requests are forbidden
+	log.Printf("Rejecting request with 403 Forbidden: %s", path)
+	http.Error(w, "Forbidden", http.StatusForbidden)
 }
 
 func handleIPLookup(w http.ResponseWriter, r *http.Request, ipAddress string) {
@@ -186,6 +156,7 @@ func handleIPLookup(w http.ResponseWriter, r *http.Request, ipAddress string) {
 	// Parse IP address
 	ip := net.ParseIP(ipAddress)
 	if ip == nil {
+		log.Printf("Invalid IP address provided: %s", ipAddress)
 		http.Error(w, "Invalid IP address", http.StatusBadRequest)
 		return
 	}
@@ -193,14 +164,18 @@ func handleIPLookup(w http.ResponseWriter, r *http.Request, ipAddress string) {
 	// Get IP information
 	ipInfo, err := getIPInfo(ip)
 	if err != nil {
+		log.Printf("Error getting info for IP %s: %v", ipAddress, err)
 		http.Error(w, fmt.Sprintf("Error getting IP info: %v", err), http.StatusInternalServerError)
 		return
 	}
 	
+	log.Printf("Successfully processed IP %s (%s, %s)", 
+		ipAddress, ipInfo.CountryName, ipInfo.City)
+	
 	// Return the JSON response
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(ipInfo); err != nil {
-		log.Printf("Error encoding JSON: %v", err)
+		log.Printf("Error encoding JSON response for IP %s: %v", ipAddress, err)
 	}
 }
 
@@ -248,20 +223,14 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 	info.Country = country.Country.IsoCode
 	info.CountryName = country.Country.Names["en"]
 	info.CountryCode = country.Country.IsoCode
-	info.CountryCodeISO3 = country.Country.IsoCode3
 	info.ContinentCode = country.Continent.Code
 	info.InEU = country.Country.IsInEuropeanUnion
 	
-	// Get country metadata if available
-	if metadata, ok := countryMetadata[info.CountryCode]; ok {
-		info.CountryCapital = metadata.Capital
-		info.CountryTLD = metadata.TLD
-		info.CountryCallingCode = metadata.CallingCode
-		info.Currency = metadata.Currency
-		info.CurrencyName = metadata.CurrencyName
-		info.Languages = metadata.Languages
-		info.CountryArea = metadata.Area
-		info.CountryPopulation = metadata.Population
+	// MaxMind doesn't provide ISO3 codes directly, so we'll have to populate this from our own data
+	if iso3, ok := iso3Codes[info.CountryCode]; ok {
+		info.CountryCodeISO3 = iso3
+	} else {
+		info.CountryCodeISO3 = info.CountryCode // Fallback
 	}
 	
 	// Calculate UTC offset based on timezone
@@ -279,9 +248,16 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 		}
 	}
 	
-	// Get network information
-	if city.Traits.Network != "" {
-		info.Network = city.Traits.Network
+	// Network information isn't directly available in current version
+	// We'll construct a basic network from the IP
+	if ip.To4() != nil {
+		// For IPv4, use a /24 network as a basic approximation
+		network := ip.Mask(net.CIDRMask(24, 32))
+		info.Network = fmt.Sprintf("%s/24", network.String())
+	} else {
+		// For IPv6, use a /64 network as a basic approximation
+		network := ip.Mask(net.CIDRMask(64, 128))
+		info.Network = fmt.Sprintf("%s/64", network.String())
 	}
 	
 	return info, nil
