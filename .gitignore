@@ -1,3 +1,4 @@
 *.mmdb
+config.json
 maxmind_db
 geoip-api
