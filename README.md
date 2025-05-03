@@ -1,5 +1,11 @@
 # GeoIP API Service
 
+![CI/CD Status](https://github.com/rhamdeew/geoip-api/actions/workflows/release.yml/badge.svg)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/rhamdeew/geoip-api)](https://github.com/rhamdeew/geoip-api/releases/latest)
+[![GitHub license](https://img.shields.io/github/license/rhamdeew/geoip-api)](https://github.com/rhamdeew/geoip-api/blob/main/LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/rhamdeew/geoip-api)](https://goreportcard.com/report/github.com/rhamdeew/geoip-api)
+[![GitHub stars](https://img.shields.io/github/stars/rhamdeew/geoip-api)](https://github.com/rhamdeew/geoip-api/stargazers)
+
 A simple API service that provides geolocation information for IP addresses using MaxMind GeoIP databases.
 
 ## Features
