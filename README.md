@@ -82,6 +82,71 @@ Example response:
 }
 ```
 
+## Installation
+
+### Using the Install Script
+
+The service can be installed as a systemd service using the provided installation script:
+
+```bash
+sudo ./install.sh
+```
+
+This will:
+- Install the service to `/opt/geoip-api`
+- Create a systemd service file
+- Create a system user and group (`geoip`)
+- Configure the service to start on boot
+
+#### Installation Options
+
+The install script supports several options:
+
+```bash
+sudo ./install.sh [OPTIONS]
+```
+
+Options:
+- `--install-dir=DIR`: Installation directory (default: /opt/geoip-api)
+- `--host=HOST`: Host to bind to (default: empty, binds to all interfaces)
+- `--port=PORT`: Port to listen on (default: 5324)
+- `--user=USER`: User to run the service as (default: geoip)
+- `--group=GROUP`: Group to run the service as (default: geoip)
+
+### Starting the Service
+
+After installation, you can manage the service using systemctl:
+
+```bash
+sudo systemctl enable geoip-api   # Enable service on boot
+sudo systemctl start geoip-api    # Start the service
+sudo systemctl status geoip-api   # Check service status
+```
+
+### Uninstallation
+
+To uninstall the service:
+
+```bash
+sudo ./uninstall.sh
+```
+
+This will:
+- Stop and disable the systemd service
+- Remove the service files
+- Remove the installation directory
+
+#### Uninstallation Options
+
+```bash
+sudo ./uninstall.sh [OPTIONS]
+```
+
+Options:
+- `--install-dir=DIR`: Installation directory (default: /opt/geoip-api)
+- `--user=USER`: User the service runs as (default: geoip)
+- `--remove-user`: Also remove the service user account
+
 ## Development
 
 ### Building

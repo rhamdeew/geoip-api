@@ -54,9 +54,8 @@ jobs:
           mkdir -p release_dir
           cp "geoip-api_${{ matrix.goos }}_${{ matrix.goarch }}${EXTENSION}" release_dir/
 
-          # Copy systemd service file for Linux builds
+          # Copy shell script files for Linux builds
           if [ "${{ matrix.goos }}" = "linux" ]; then
-            cp geoip-api.service release_dir/
             cp install.sh release_dir/
             cp uninstall.sh release_dir/
           fi
