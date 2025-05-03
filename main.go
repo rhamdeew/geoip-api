@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -29,12 +30,18 @@ var geoipOpen openFunc = func(filename string) (Reader, error) {
 type Config struct {
 	Host string `json:"host"`
 	Port string `json:"port"`
+	SSL  bool   `json:"ssl"`   // Whether to use SSL
+	Cert string `json:"cert"`  // Path to certificate file
+	Key  string `json:"key"`   // Path to key file
 }
 
 // Default configuration values
 var defaultConfig = Config{
 	Host: "",     // Empty host means accept all hosts
 	Port: "5324", // Default port
+	SSL:  false,  // Default to not using SSL
+	Cert: "",     // Empty means no certificate file
+	Key:  "",     // Empty means no key file
 }
 
 // IPInfo represents the information about an IP address
@@ -168,6 +175,11 @@ func main() {
 		config = defaultConfig
 	}
 
+	// Validate SSL configuration
+	if err := validateSSLConfig(); err != nil {
+		log.Fatalf("Invalid SSL configuration: %v", err)
+	}
+
 	// Ensure database directory exists
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
 		log.Fatalf("Failed to create database directory: %v", err)
@@ -187,7 +199,26 @@ func main() {
 	// Start the server
 	addr := fmt.Sprintf("%s:%s", config.Host, config.Port)
 	log.Printf("Starting server on %s...\n", addr)
-	log.Fatal(http.ListenAndServe(addr, nil))
+
+	if config.SSL {
+		// Ensure we have certificate and key files
+		if config.Cert == "" || config.Key == "" {
+			// Generate self-signed certificates
+			certFile, keyFile, err := generateSelfSignedCert()
+			if err != nil {
+				log.Fatalf("Failed to generate self-signed certificate: %v", err)
+			}
+			config.Cert = certFile
+			config.Key = keyFile
+			log.Printf("Using self-signed certificate: %s and key: %s", config.Cert, config.Key)
+		} else {
+			log.Printf("Using provided certificate: %s and key: %s", config.Cert, config.Key)
+		}
+
+		log.Fatal(http.ListenAndServeTLS(addr, config.Cert, config.Key, nil))
+	} else {
+		log.Fatal(http.ListenAndServe(addr, nil))
+	}
 }
 
 // Ensure the configuration file exists, create with default values if it doesn't
@@ -244,6 +275,11 @@ func loadConfig(path string) error {
 	log.Printf("Configuration loaded from %s", path)
 	log.Printf("  Host: %s", config.Host)
 	log.Printf("  Port: %s", config.Port)
+	log.Printf("  SSL: %v", config.SSL)
+	if config.SSL {
+		log.Printf("  Certificate: %s", config.Cert)
+		log.Printf("  Key: %s", config.Key)
+	}
 
 	return nil
 }
@@ -551,4 +587,59 @@ func getClientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return ip
+}
+
+// validateSSLConfig validates the SSL configuration
+func validateSSLConfig() error {
+	// If SSL is disabled but cert or key is specified, return an error
+	if !config.SSL && (config.Cert != "" || config.Key != "") {
+		return fmt.Errorf("SSL is disabled but certificate or key path is provided")
+	}
+
+	// If SSL is enabled and only one of cert or key is specified, return an error
+	if config.SSL && ((config.Cert != "" && config.Key == "") || (config.Cert == "" && config.Key != "")) {
+		return fmt.Errorf("both certificate and key must be provided when using SSL with custom certificates")
+	}
+
+	return nil
+}
+
+// generateSelfSignedCert generates a self-signed certificate and key
+func generateSelfSignedCert() (string, string, error) {
+	// Create directory for certificates if it doesn't exist
+	certDir := "./certs"
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		return "", "", fmt.Errorf("failed to create certificates directory: %v", err)
+	}
+
+	certFile := filepath.Join(certDir, "server.crt")
+	keyFile := filepath.Join(certDir, "server.key")
+
+	// Check if files already exist
+	if _, err := os.Stat(certFile); err == nil {
+		if _, err := os.Stat(keyFile); err == nil {
+			// Both files exist, reuse them
+			return certFile, keyFile, nil
+		}
+	}
+
+	// Generate a new certificate and key using openssl
+	log.Println("Generating self-signed certificate...")
+
+	// Generate private key
+	keyCmd := exec.Command("openssl", "genrsa", "-out", keyFile, "2048")
+	if err := keyCmd.Run(); err != nil {
+		return "", "", fmt.Errorf("failed to generate private key: %v", err)
+	}
+
+	// Generate self-signed certificate
+	certCmd := exec.Command("openssl", "req", "-new", "-x509", "-key", keyFile,
+		"-out", certFile, "-days", "365", "-subj",
+		"/C=US/ST=State/L=City/O=Organization/OU=Unit/CN=localhost")
+	if err := certCmd.Run(); err != nil {
+		return "", "", fmt.Errorf("failed to generate self-signed certificate: %v", err)
+	}
+
+	log.Println("Self-signed certificate generated successfully")
+	return certFile, keyFile, nil
 }
