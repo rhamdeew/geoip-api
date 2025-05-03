@@ -1,177 +1,118 @@
-# GeoIP API Installation and Deployment Guide
+# GeoIP API Service
 
-This guide explains how to install and deploy the GeoIP API service using systemd.
+A simple API service that provides geolocation information for IP addresses using MaxMind GeoIP databases.
 
-## Building the Application
+## Features
 
-1. Ensure you have Go 1.18 or later installed:
-
-```bash
-go version
-```
-
-2. Clone the repository:
-
-```bash
-git clone https://github.com/rhamdeew/geoip-api.git
-cd geoip-api
-```
-
-3. Build the application:
-
-```bash
-go mod tidy
-go build -o geoip-api
-```
-
-## Creating a Service User
-
-Create a dedicated user for running the service:
-
-```bash
-sudo useradd -r -s /bin/false geoip
-```
-
-## Installation
-
-1. Create the installation directory:
-
-```bash
-sudo mkdir -p /opt/geoip-api
-sudo mkdir -p /opt/geoip-api/maxmind_db
-```
-
-2. Copy the binary, config file, and set permissions:
-
-```bash
-sudo cp geoip-api /opt/geoip-api/
-sudo cp config.json /opt/geoip-api/
-sudo chown -R geoip:geoip /opt/geoip-api
-sudo chmod 755 /opt/geoip-api/geoip-api
-```
-
-3. Copy the systemd service file:
-
-```bash
-sudo cp geoip-api.service /etc/systemd/system/
-```
-
-## Starting the Service
-
-1. Reload systemd to recognize the new service:
-
-```bash
-sudo systemctl daemon-reload
-```
-
-2. Enable the service to start at boot:
-
-```bash
-sudo systemctl enable geoip-api
-```
-
-3. Start the service:
-
-```bash
-sudo systemctl start geoip-api
-```
-
-4. Check the service status:
-
-```bash
-sudo systemctl status geoip-api
-```
-
-## Configuration
-
-The service uses a JSON configuration file located at `/opt/geoip-api/config.json` with the following structure:
-
-```json
-{
-  "host": "api.example.com",  // Hostname to accept requests from (empty for all hosts)
-  "port": "5324"              // Port to listen on
-}
-```
-
-### Configuration Options
-
-- **host**: Hostname to accept connections from. If set, the API will only respond to requests with a matching `Host` header. Leave empty to accept all hosts.
-- **port**: Port number the API should listen on.
-
-You can also specify an alternative configuration file path using the `-config` flag:
-
-```bash
-sudo systemctl edit geoip-api
-```
-
-Add the following to change the config path:
-
-```
-[Service]
-ExecStart=
-ExecStart=/opt/geoip-api/geoip-api -config /path/to/your/config.json
-```
+- IP lookup with detailed geolocation information
+- Support for both IPv4 and IPv6 addresses
+- Automatic database updates
+- Simple configuration
+- Auto-generation of config.json if not exists
+- Automatic downloading of MaxMind DB files if not exists
 
 ## Usage
 
-The GeoIP API service will:
+### Configuration
 
-1. Automatically download MaxMind databases if they're not present
-2. Update databases monthly
-3. Listen on the configured port and accept requests from the configured hostname
+A `config.json` file with the following format is used:
 
-Available endpoints:
-
-- `/ipgeo` - Get geolocation information for the client's IP address
-- `/ipgeo/{ip}` - Get geolocation information for a specific IP address
-
-Example:
-
-```
-curl http://localhost:5324/ipgeo/8.8.8.8
+```json
+{
+  "host": "localhost",
+  "port": "5324"
+}
 ```
 
-## Logs
+- `host`: The host to bind to (empty string for all interfaces)
+- `port`: The port to listen on
 
-View service logs:
+If the configuration file doesn't exist, it will be automatically created with default values when the service starts.
 
-```bash
-sudo journalctl -u geoip-api
+### Starting the Service
+
+Run the service:
+
+```
+./geoip-api
 ```
 
-## Firewall Configuration
+Or specify a custom configuration file:
 
-If you have a firewall enabled, allow traffic to port 5324:
-
-### For UFW:
-
-```bash
-sudo ufw allow 5324/tcp
+```
+./geoip-api -config /path/to/config.json
 ```
 
-### For firewalld:
+The service will automatically download the necessary MaxMind GeoIP databases if they don't exist when it starts.
 
-```bash
-sudo firewall-cmd --permanent --add-port=5324/tcp
-sudo firewall-cmd --reload
+### API Endpoints
+
+- `GET /ipgeo`: Returns information about the client's IP address
+- `GET /ipgeo/{ip}`: Returns information about the specified IP address
+
+Example response:
+
+```json
+{
+  "ip": "8.8.8.8",
+  "network": "8.8.8.0/24",
+  "version": "IPv4",
+  "city": "Mountain View",
+  "region": "California",
+  "region_code": "CA",
+  "country": "US",
+  "country_name": "United States",
+  "country_code": "US",
+  "country_code_iso3": "USA",
+  "continent_code": "NA",
+  "in_eu": false,
+  "postal": "94035",
+  "latitude": 37.4056,
+  "longitude": -122.0775,
+  "timezone": "America/Los_Angeles",
+  "utc_offset": "-0700",
+  "asn": "AS15169",
+  "org": "Google LLC"
+}
 ```
 
-## Troubleshooting
+## Development
 
-- If the service fails to start, check the logs:
+### Building
 
-```bash
-sudo journalctl -u geoip-api -n 50 --no-pager
+To build the application:
+
+```
+make build
 ```
 
-- Verify database files exist in the correct location:
+Or build and run in one step:
 
-```bash
-ls -la /opt/geoip-api/maxmind_db/
+```
+make run
 ```
 
-- Check if the service is running and listening on the correct port:
+### Testing
 
-```bash
-sudo ss -tulpn | grep 5324
+Run all tests:
+
 ```
+make test
+```
+
+The tests include:
+- Unit tests for all core functions
+- HTTP handler tests
+- Database management tests
+
+Mock implementations are used for the GeoIP database readers to avoid dependencies on actual MaxMind databases during testing.
+
+### Test Coverage
+
+Check test coverage:
+
+```
+make test-coverage
+```
+
+This will generate a coverage report in HTML format.
