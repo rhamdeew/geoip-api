@@ -31,6 +31,12 @@ type Config struct {
 	Port string `json:"port"`
 }
 
+// Default configuration values
+var defaultConfig = Config{
+	Host: "",     // Empty host means accept all hosts
+	Port: "5324", // Default port
+}
+
 // IPInfo represents the information about an IP address
 type IPInfo struct {
 	IP                string  `json:"ip"`
@@ -148,16 +154,18 @@ func main() {
 	// Parse command line flags
 	flag.Parse()
 
+	// Check if config.json exists, create it if it doesn't
+	if err := ensureConfigFileExists(configPath); err != nil {
+		log.Printf("Error creating configuration file: %v", err)
+	}
+
 	// Load configuration
 	if err := loadConfig(configPath); err != nil {
 		log.Printf("Error loading configuration: %v", err)
 		log.Println("Using default configuration")
 
 		// Set default configuration
-		config = Config{
-			Host: "",       // Empty host means accept all hosts
-			Port: "5324",   // Default port
-		}
+		config = defaultConfig
 	}
 
 	// Ensure database directory exists
@@ -180,6 +188,40 @@ func main() {
 	addr := fmt.Sprintf("%s:%s", config.Host, config.Port)
 	log.Printf("Starting server on %s...\n", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+// Ensure the configuration file exists, create with default values if it doesn't
+func ensureConfigFileExists(path string) error {
+	// Ensure parent directory exists
+	configDir := filepath.Dir(path)
+	if configDir != "." && configDir != "/" {
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			return fmt.Errorf("failed to create config directory %s: %v", configDir, err)
+		}
+	}
+
+	// Check if file exists
+	_, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		log.Printf("Configuration file %s does not exist, creating with default values", path)
+
+		// Create the file with default config
+		data, err := json.MarshalIndent(defaultConfig, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal default configuration: %v", err)
+		}
+
+		err = os.WriteFile(path, data, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to write default configuration file: %v", err)
+		}
+
+		log.Printf("Created default configuration file at %s", path)
+	} else if err != nil {
+		return fmt.Errorf("failed to check if config file exists: %v", err)
+	}
+
+	return nil
 }
 
 // Load configuration from file
