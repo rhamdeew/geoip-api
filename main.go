@@ -17,6 +17,14 @@ import (
 	"github.com/oschwald/geoip2-golang"
 )
 
+// Define a function type for geoip2.Open to make it mockable in tests
+type openFunc func(string) (Reader, error)
+
+// Default implementation uses the real geoip2.Open
+var geoipOpen openFunc = func(filename string) (Reader, error) {
+	return geoip2.Open(filename)
+}
+
 // Config represents the application configuration
 type Config struct {
 	Host string `json:"host"`
@@ -46,9 +54,17 @@ type IPInfo struct {
 	Org               string  `json:"org"`
 }
 
+// Reader interface provides a common interface for GeoIP functionality
+type Reader interface {
+	ASN(net.IP) (*geoip2.ASN, error)
+	City(net.IP) (*geoip2.City, error)
+	Country(net.IP) (*geoip2.Country, error)
+	Close() error
+}
+
 // Database configuration
 type dbConfig struct {
-	reader     *geoip2.Reader
+	reader     Reader
 	url        string
 	localPath  string
 	lastUpdate time.Time
@@ -65,7 +81,7 @@ var (
 var (
 	// Fixed path for MaxMind databases
 	dbDir = "./maxmind_db"
-	
+
 	// Database configurations
 	databases = map[string]*dbConfig{
 		"asn": {
@@ -81,7 +97,7 @@ var (
 			localPath: filepath.Join(dbDir, "GeoLite2-Country.mmdb"),
 		},
 	}
-	
+
 	// ISO3 country codes mapping
 	iso3Codes = map[string]string{
 		"AD": "AND", "AE": "ARE", "AF": "AFG", "AG": "ATG", "AI": "AIA", "AL": "ALB", "AM": "ARM",
@@ -131,32 +147,32 @@ func init() {
 func main() {
 	// Parse command line flags
 	flag.Parse()
-	
+
 	// Load configuration
 	if err := loadConfig(configPath); err != nil {
 		log.Printf("Error loading configuration: %v", err)
 		log.Println("Using default configuration")
-		
+
 		// Set default configuration
 		config = Config{
 			Host: "",       // Empty host means accept all hosts
 			Port: "5324",   // Default port
 		}
 	}
-	
+
 	// Ensure database directory exists
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
 		log.Fatalf("Failed to create database directory: %v", err)
 	}
-	
+
 	// Initialize or update databases
 	if err := initDatabases(); err != nil {
 		log.Fatalf("Error initializing databases: %v", err)
 	}
-	
+
 	// Start a goroutine to periodically update databases
 	go startDatabaseUpdater()
-	
+
 	// Set up router with custom handler that checks all requests
 	http.HandleFunc("/", handleRequest)
 
@@ -173,20 +189,20 @@ func loadConfig(path string) error {
 		return err
 	}
 	defer file.Close()
-	
+
 	data, err := io.ReadAll(file)
 	if err != nil {
 		return err
 	}
-	
+
 	if err := json.Unmarshal(data, &config); err != nil {
 		return err
 	}
-	
+
 	log.Printf("Configuration loaded from %s", path)
 	log.Printf("  Host: %s", config.Host)
 	log.Printf("  Port: %s", config.Port)
-	
+
 	return nil
 }
 
@@ -202,16 +218,16 @@ func initDatabases() error {
 			}
 			db.lastUpdate = time.Now()
 		}
-		
+
 		// Open the database reader
-		reader, err := geoip2.Open(db.localPath)
+		reader, err := geoipOpen(db.localPath)
 		if err != nil {
 			return fmt.Errorf("error opening %s database: %v", name, err)
 		}
-		
+
 		log.Printf("Successfully opened %s database", name)
 		db.reader = reader
-		
+
 		// If we don't know when it was last updated, set to file's modification time
 		if db.lastUpdate.IsZero() {
 			if info, err := os.Stat(db.localPath); err == nil {
@@ -222,7 +238,7 @@ func initDatabases() error {
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -230,7 +246,7 @@ func initDatabases() error {
 func startDatabaseUpdater() {
 	ticker := time.NewTicker(24 * time.Hour) // Check daily
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -245,20 +261,20 @@ func updateDatabasesIfNeeded() {
 		// Check if database is older than one month
 		if time.Since(db.lastUpdate) >= 30*24*time.Hour {
 			log.Printf("Database %s is older than 30 days, updating...", name)
-			
+
 			// Download to a temporary file
 			tempPath := db.localPath + ".new"
 			if err := downloadDatabase(db.url, tempPath); err != nil {
 				log.Printf("Failed to download updated %s database: %v", name, err)
 				continue
 			}
-			
+
 			// Close the existing reader before replacing the file
 			db.mutex.Lock()
 			if db.reader != nil {
 				db.reader.Close()
 			}
-			
+
 			// Replace the old file with the new one
 			if err := os.Rename(tempPath, db.localPath); err != nil {
 				log.Printf("Failed to replace %s database file: %v", name, err)
@@ -269,20 +285,20 @@ func updateDatabasesIfNeeded() {
 				db.mutex.Unlock()
 				continue
 			}
-			
+
 			// Open the new database
-			reader, err := geoip2.Open(db.localPath)
+			reader, err := geoipOpen(db.localPath)
 			if err != nil {
 				log.Printf("Failed to open updated %s database: %v", name, err)
 				db.mutex.Unlock()
 				continue
 			}
-			
+
 			// Update the reader and last update time
 			db.reader = reader
 			db.lastUpdate = time.Now()
 			db.mutex.Unlock()
-			
+
 			log.Printf("Successfully updated %s database", name)
 		}
 	}
@@ -296,19 +312,19 @@ func downloadDatabase(url string, localPath string) error {
 		return err
 	}
 	defer out.Close()
-	
+
 	// Send HTTP GET request
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	
+
 	// Check server response
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
-	
+
 	// Copy the file content
 	_, err = io.Copy(out, resp.Body)
 	return err
@@ -316,7 +332,7 @@ func downloadDatabase(url string, localPath string) error {
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	
+
 	// Check host if configured
 	if config.Host != "" {
 		// Parse the Host header to extract hostname without port
@@ -325,17 +341,17 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			// If we could split the host and port, use just the host part
 			requestHost = hostWithoutPort
 		}
-		
+
 		if requestHost != config.Host {
 			log.Printf("Request rejected due to incorrect host: %s (expected %s)", requestHost, config.Host)
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 	}
-	
+
 	// Log the request
 	log.Printf("Request received: %s %s from %s", r.Method, path, getClientIP(r))
-	
+
 	// Check if path is one of our valid endpoints
 	if path == "/ipgeo" {
 		// Handle client IP lookup
@@ -353,7 +369,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	
+
 	// All other requests are forbidden
 	log.Printf("Rejecting request with 403 Forbidden: %s", path)
 	http.Error(w, "Forbidden", http.StatusForbidden)
@@ -361,7 +377,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 
 func handleIPLookup(w http.ResponseWriter, r *http.Request, ipAddress string) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	// Parse IP address
 	ip := net.ParseIP(ipAddress)
 	if ip == nil {
@@ -369,7 +385,7 @@ func handleIPLookup(w http.ResponseWriter, r *http.Request, ipAddress string) {
 		http.Error(w, "Invalid IP address", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Get IP information
 	ipInfo, err := getIPInfo(ip)
 	if err != nil {
@@ -377,10 +393,10 @@ func handleIPLookup(w http.ResponseWriter, r *http.Request, ipAddress string) {
 		http.Error(w, fmt.Sprintf("Error getting IP info: %v", err), http.StatusInternalServerError)
 		return
 	}
-	
-	log.Printf("Successfully processed IP %s (%s, %s)", 
+
+	log.Printf("Successfully processed IP %s (%s, %s)",
 		ipAddress, ipInfo.CountryName, ipInfo.City)
-	
+
 	// Return the JSON response
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(ipInfo); err != nil {
@@ -393,11 +409,11 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 		IP:      ip.String(),
 		Version: "IPv4",
 	}
-	
+
 	if ip.To4() == nil {
 		info.Version = "IPv6"
 	}
-	
+
 	// Get ASN information
 	databases["asn"].mutex.RLock()
 	asn, err := databases["asn"].reader.ASN(ip)
@@ -405,10 +421,10 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ASN lookup error: %v", err)
 	}
-	
+
 	info.ASN = fmt.Sprintf("AS%d", asn.AutonomousSystemNumber)
 	info.Org = asn.AutonomousSystemOrganization
-	
+
 	// Get city information
 	databases["city"].mutex.RLock()
 	city, err := databases["city"].reader.City(ip)
@@ -416,7 +432,7 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("city lookup error: %v", err)
 	}
-	
+
 	info.City = city.City.Names["en"]
 	if len(city.Subdivisions) > 0 {
 		info.Region = city.Subdivisions[0].Names["en"]
@@ -426,7 +442,7 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 	info.Latitude = city.Location.Latitude
 	info.Longitude = city.Location.Longitude
 	info.Timezone = city.Location.TimeZone
-	
+
 	// Get country information
 	databases["country"].mutex.RLock()
 	country, err := databases["country"].reader.Country(ip)
@@ -434,20 +450,20 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("country lookup error: %v", err)
 	}
-	
+
 	info.Country = country.Country.IsoCode
 	info.CountryName = country.Country.Names["en"]
 	info.CountryCode = country.Country.IsoCode
 	info.ContinentCode = country.Continent.Code
 	info.InEU = country.Country.IsInEuropeanUnion
-	
+
 	// MaxMind doesn't provide ISO3 codes directly, so we'll have to populate this from our own data
 	if iso3, ok := iso3Codes[info.CountryCode]; ok {
 		info.CountryCodeISO3 = iso3
 	} else {
 		info.CountryCodeISO3 = info.CountryCode // Fallback
 	}
-	
+
 	// Calculate UTC offset based on timezone
 	if info.Timezone != "" {
 		loc, err := time.LoadLocation(info.Timezone)
@@ -462,7 +478,7 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 			info.UTCOffset = fmt.Sprintf("%s%02d00", offsetSign, offsetHours)
 		}
 	}
-	
+
 	// Network information isn't directly available in current version
 	// We'll construct a basic network from the IP
 	if ip.To4() != nil {
@@ -474,7 +490,7 @@ func getIPInfo(ip net.IP) (*IPInfo, error) {
 		network := ip.Mask(net.CIDRMask(64, 128))
 		info.Network = fmt.Sprintf("%s/64", network.String())
 	}
-	
+
 	return info, nil
 }
 
@@ -486,7 +502,7 @@ func getClientIP(r *http.Request) string {
 		ips := strings.Split(forwarded, ",")
 		return strings.TrimSpace(ips[0])
 	}
-	
+
 	// Otherwise, use RemoteAddr
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

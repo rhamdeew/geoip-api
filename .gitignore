@@ -2,3 +2,5 @@
 config.json
 maxmind_db
 geoip-api
+coverage.*
+
