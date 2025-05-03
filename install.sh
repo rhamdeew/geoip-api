@@ -14,6 +14,10 @@ USER="geoip"
 GROUP="geoip"
 # Default binary name (will try to auto-detect if not specified)
 BINARY_NAME=""
+# Default SSL settings
+ENABLE_SSL="false"
+SSL_CERT=""
+SSL_KEY=""
 
 # Process command line arguments
 while [ $# -gt 0 ]; do
@@ -36,6 +40,15 @@ while [ $# -gt 0 ]; do
     --binary=*)
       BINARY_NAME="${1#*=}"
       ;;
+    --enable-ssl)
+      ENABLE_SSL="true"
+      ;;
+    --ssl-cert=*)
+      SSL_CERT="${1#*=}"
+      ;;
+    --ssl-key=*)
+      SSL_KEY="${1#*=}"
+      ;;
     --help)
       echo "Usage: $0 [OPTIONS]"
       echo "Install the geoip-api service."
@@ -47,6 +60,9 @@ while [ $# -gt 0 ]; do
       echo "  --user=USER          User to run the service as (default: geoip)"
       echo "  --group=GROUP        Group to run the service as (default: geoip)"
       echo "  --binary=NAME        Specific binary name to use (e.g., geoip-api_linux_arm64)"
+      echo "  --enable-ssl         Enable SSL/HTTPS support"
+      echo "  --ssl-cert=FILE      Path to SSL certificate file"
+      echo "  --ssl-key=FILE       Path to SSL private key file"
       echo "  --help               Display this help message"
       exit 0
       ;;
@@ -71,15 +87,27 @@ echo "Host: $HOST"
 echo "Port: $PORT"
 echo "User: $USER"
 echo "Group: $GROUP"
+echo "SSL enabled: $ENABLE_SSL"
+if [ "$ENABLE_SSL" = "true" ]; then
+  echo "SSL certificate: $SSL_CERT"
+  echo "SSL key: $SSL_KEY"
+fi
 
 # Create installation directory
 mkdir -p "$INSTALL_DIR/maxmind_db"
+# Create certificates directory if SSL is enabled
+if [ "$ENABLE_SSL" = "true" ]; then
+  mkdir -p "$INSTALL_DIR/certs"
+fi
 
 # Create config.json
 cat > "$INSTALL_DIR/config.json" << EOF
 {
   "host": "$HOST",
-  "port": "$PORT"
+  "port": "$PORT",
+  "ssl": $ENABLE_SSL,
+  "cert": "$SSL_CERT",
+  "key": "$SSL_KEY"
 }
 EOF
 
@@ -166,4 +194,13 @@ echo "  systemctl start geoip-api"
 echo ""
 echo "The MaxMind databases will be downloaded on first run."
 echo "If you have custom database files, place them in $INSTALL_DIR/maxmind_db/"
-echo "The service will run on http://$HOST:$PORT/ (empty host means all interfaces)"
+if [ "$ENABLE_SSL" = "true" ]; then
+  protocol="https"
+  echo "SSL is enabled. The service will run on $protocol://$HOST:$PORT/ (empty host means all interfaces)"
+  if [ -z "$SSL_CERT" ] || [ -z "$SSL_KEY" ]; then
+    echo "No certificate/key provided - the service will generate self-signed certificates on first run."
+  fi
+else
+  protocol="http"
+  echo "The service will run on $protocol://$HOST:$PORT/ (empty host means all interfaces)"
+fi
