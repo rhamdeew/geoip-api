@@ -9,6 +9,8 @@ INSTALL_DIR="/opt/geoip-api"
 USER="geoip"
 # Whether to remove the user account
 REMOVE_USER=false
+# Whether to remove SSL certificates
+REMOVE_CERTS=true
 
 # Process command line arguments
 while [ $# -gt 0 ]; do
@@ -22,6 +24,9 @@ while [ $# -gt 0 ]; do
     --remove-user)
       REMOVE_USER=true
       ;;
+    --keep-certs)
+      REMOVE_CERTS=false
+      ;;
     --help)
       echo "Usage: $0 [OPTIONS]"
       echo "Uninstall the geoip-api service."
@@ -30,6 +35,7 @@ while [ $# -gt 0 ]; do
       echo "  --install-dir=DIR    Installation directory (default: /opt/geoip-api)"
       echo "  --user=USER          User the service runs as (default: geoip)"
       echo "  --remove-user        Also remove the service user account"
+      echo "  --keep-certs         Keep SSL certificates (don't remove them)"
       echo "  --help               Display this help message"
       exit 0
       ;;
@@ -52,6 +58,7 @@ echo "Uninstalling geoip-api..."
 echo "Installation directory: $INSTALL_DIR"
 echo "User: $USER"
 echo "Remove user: $REMOVE_USER"
+echo "Remove certificates: $REMOVE_CERTS"
 
 # Stop and disable the service if it exists
 if systemctl list-unit-files | grep -q geoip-api.service; then
@@ -63,6 +70,15 @@ if systemctl list-unit-files | grep -q geoip-api.service; then
   systemctl daemon-reload
 else
   echo "Service not found, skipping service removal."
+fi
+
+# Backup SSL certificates if requested
+if [ "$REMOVE_CERTS" = false ] && [ -d "$INSTALL_DIR/certs" ]; then
+  echo "Backing up SSL certificates..."
+  BACKUP_DIR="/tmp/geoip-ssl-certs-$(date +%s)"
+  mkdir -p "$BACKUP_DIR"
+  cp -r "$INSTALL_DIR/certs"/* "$BACKUP_DIR"/ 2>/dev/null || true
+  echo "Certificates backed up to $BACKUP_DIR"
 fi
 
 # Remove the installation directory
@@ -80,3 +96,6 @@ if [ "$REMOVE_USER" = true ] && id -u "$USER" > /dev/null 2>&1; then
 fi
 
 echo "Uninstallation completed successfully!"
+if [ "$REMOVE_CERTS" = false ] && [ -d "$BACKUP_DIR" ]; then
+  echo "SSL certificates were backed up to: $BACKUP_DIR"
+fi
